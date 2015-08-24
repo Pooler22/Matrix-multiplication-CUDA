@@ -61,67 +61,62 @@ __global__ void matrixMultiplicationGPUSharedMemeory(int *inputA, int *inputB, i
 int* generateArray(int count)
 {
 	int *array;
-	array = (int*)calloc(count,sizeof(int));
+	array = (int*)malloc(count * sizeof(int));
 	srand(time(NULL));
 	for (int i = 0; i < count; i++)
 	{
-		(array)[i] = rand() / RAND_MAX;
+		(array)[i] = rand() % RAND_MAX;
 	}
 	return array;
 }
 
 int main() {
-	int *a, *b;
-
-	a = generateArray(N*N);
-	b = generateArray(N*N);
-
-	int* c;
-	c = (int*)calloc(N*N, sizeof(int));
-
-	for (int i = 0; i < N*N; i++)
-		c[i] = 0;
-
-
-	
-	int i, j;
-	int *dev_a, *dev_b, *dev_c;
+	int *inputA, *inputB, *output, *dev_inputA, *dev_inputB, *dev_output, i, j, size = N * N * sizeof(int);
 	float time;
 	cudaEvent_t start, stop;
+	LARGE_INTEGER frequency, startCPU, endCPU;
+	FILE *fileTime = fopen("outTime.txt", "a");
+	FILE *fileMatrixCPU = fopen("outMatrix.txt", "a");
+	FILE *fileMatrixGPU = fopen("outMatrix.txt", "a");
+	
+	//prepare array
+	inputA = generateArray(N * N);
+	inputB = generateArray(N * N);
+	output = (int*)malloc(size);
+	for (int i = 0; i < N * N; i++)
+		output[i] = 0;
+	
+	//prepare to measure CPU time
+	QueryPerformanceFrequency(&frequency);
+	QueryPerformanceCounter(&startCPU);
+	//CPU calculations
+	matrixMultiplicationCPU(inputA, inputB, output);
+	QueryPerformanceCounter(&endCPU);
+	
+	//save to file
+	for (i = 0; i < N; i++) 
+	{
+		for (j = 0; j < N; j++)
+			fprintf(fileMatrixCPU, "%d\t", output[i*N+j]);
+		fprintf(fileMatrixCPU, "\n");
+	}
+	fprintf(fileTime, "matrixMultiplicationCPU time %f ms\n", ((double)(endCPU.QuadPart - startCPU.QuadPart) / frequency.QuadPart) * 1000);
+
+
+
+	//prepare CUDA
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);
 	cudaEventRecord(start, 0);
+	cudaMalloc((void **)&dev_inputA, size);
+	cudaMalloc((void **)&dev_inputB, size);
+	cudaMalloc((void **)&dev_output, size);
 
-	LARGE_INTEGER frequency;
-	LARGE_INTEGER startCPU;
-	LARGE_INTEGER endCPU;
-	QueryPerformanceFrequency(&frequency);
-	QueryPerformanceCounter(&startCPU);
-
-	matrixMultiplicationCPU(a, b, c);
-	
-	QueryPerformanceCounter(&endCPU);
-	
-	printf("matrixMultiplicationCPU\n");
-	for (i = 0; i < N; i++) {
-		for (j = 0; j < N; j++)
-		{
-		//	printf("%d\t", c[i*N+j]);
-		}
-		//printf("\n");
-	}
-	printf("time %f ms\n", ((double)(endCPU.QuadPart - startCPU.QuadPart) / frequency.QuadPart) * 1000);
-
-	int size = N * N * sizeof(int);
-	cudaMalloc((void **)&dev_a, size);
-	cudaMalloc((void **)&dev_b, size);
-	cudaMalloc((void **)&dev_c, size);
-
-	cudaMemcpy(dev_a, a, size, cudaMemcpyHostToDevice);
-	cudaMemcpy(dev_b, b, size, cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_inputA, inputA, size, cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_inputB, inputB, size, cudaMemcpyHostToDevice);
 
 	//dim for shared
-	taki jest wynik dim3 dimGrid(N / TILE_WIDTH, N / TILE_WIDTH);
+	dim3 dimGrid(N / TILE_WIDTH, N / TILE_WIDTH);
 	dim3 dimBlock(TILE_WIDTH, TILE_WIDTH);
 
 	//dim non shared
@@ -136,29 +131,76 @@ int main() {
 	printf("Grid\n%d Blok\t%d Watki\n", blok, watek);
 
 	cudaEventRecord(start, 0);
-
-	//matrixMultiplicationGPU << <dimGrid, dimBlock >> >(dev_a, dev_b, dev_c, N);
-	matrixMultiplicationGPUSharedMemeory <<<dimGrid, dimBlock >>>(dev_a, dev_b, dev_c, N);
-
-	cudaMemcpy(c, dev_c, size, cudaMemcpyDeviceToHost);
-
+	//GPU calculations
+	//matrixMultiplicationGPU << <dimGrid, dimBlock >> >(dev_inputA, dev_inputB, output, N);
+	matrixMultiplicationGPUSharedMemeory << <dimGrid, dimBlock >> >(dev_inputA, dev_inputB, output, N);
+	cudaMemcpy(output, dev_output, size, cudaMemcpyDeviceToHost);
 	cudaEventRecord(stop, 0);
 	cudaEventSynchronize(stop);
 	cudaEventElapsedTime(&time, start, stop);
 
-	printf("\n\matrixMultiplicationGPU\n");
-	for (i = 0; i < N; ++i){
-		for (j = 0; j < N; ++j)
-		{
-		//	printf("%d\t", c[i*N+j]);
-		}
-		//printf("\n");
+	for (i = 0; i < N; i++)
+	{
+		for (j = 0; j < N; j++)
+			fprintf(fileMatrixGPU, "%d\t", output[i * N + j]);
+		fprintf(fileMatrixGPU,"\n");
 	}
-	printf("time %g ms\n", time);
+	fprintf(fileTime, "matrixMultiplicationGPU time %g ms\n", time);
 
-	cudaFree(dev_a);
-	cudaFree(dev_b);
-	cudaFree(dev_c);
+	cudaFree(dev_inputA);
+	cudaFree(dev_inputB);
+	cudaFree(dev_output);
+
+
+
+
+
+	//prepare CUDA
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start, 0);
+	cudaMalloc((void **)&dev_inputA, size);
+	cudaMalloc((void **)&dev_inputB, size);
+	cudaMalloc((void **)&dev_output, size);
+
+	cudaMemcpy(dev_inputA, inputA, size, cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_inputB, inputB, size, cudaMemcpyHostToDevice);
+
+	//dim for shared
+	dim3 dimGridSM(N / TILE_WIDTH, N / TILE_WIDTH);
+	dim3 dimBlockSM(TILE_WIDTH, TILE_WIDTH);
+
+	//dim non shared
+	//dim3 dimBlock(N, N);
+	//dim3 dimGrid(1, 1);
+	//dim3 dimGrid((int)ceil(N/dimBlock.x),(int)ceil(N/dimBlock.y));
+
+	int blokSM = (int)ceil(N / dimBlockSM.x);
+	int watekSM = (int)ceil(N / dimBlockSM.y);
+
+	printf("Blok\n%d X\t%d Y\n\n", dimBlockSM.x, dimBlockSM.y);
+	printf("Grid\n%d Blok\t%d Watki\n", blokSM, watekSM);
+
+	cudaEventRecord(start, 0);
+	//GPU calculations
+	//matrixMultiplicationGPU << <dimGrid, dimBlock >> >(dev_inputA, dev_inputB, output, N);
+	matrixMultiplicationGPUSharedMemeory << <dimGridSM, dimBlockSM >> >(dev_inputA, dev_inputB, output, N);
+	cudaMemcpy(output, dev_output, size, cudaMemcpyDeviceToHost);
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&time, start, stop);
+
+	for (i = 0; i < N; i++)
+	{
+		for (j = 0; j < N; j++)
+			fprintf(fileMatrixGPU, "%d\t", output[i * N + j]);
+		fprintf(fileMatrixGPU, "\n");
+	}
+	fprintf(fileTime, "matrixMultiplicationGPU time %g ms\n", time);
+
+	cudaFree(dev_inputA);
+	cudaFree(dev_inputB);
+	cudaFree(dev_output);
 
 	system("PAUSE");
 	return 0;
