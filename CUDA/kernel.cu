@@ -18,9 +18,6 @@ void matrixMultiplicationCPU(int* inputA, int* inputB, int* output)
 	int i, j, k;
 	for (i = 0; i < size; i++)
 		for (j = 0; j < size; j++)
-			output[i*size+j] = 0;
-	for (i = 0; i < size; i++)
-		for (j = 0; j < size; j++)
 			for (k = 0; k < size; k++)
 				output[i*size + j] = output[i*size + j] + inputA[i*size + k] * inputB[j*size + j];
 }
@@ -121,21 +118,23 @@ void GPU(int* inputA, int* inputB, int* output, FILE *fileTime)
 	QueryPerformanceFrequency(&frequency);
 	QueryPerformanceCounter(&start);
 	matrixMultiplicationGPU << <dimGrid, dimBlock >> >(dev_inputA, dev_inputB, dev_output, size);
+	cudaDeviceSynchronize();
 	cudaMemcpy(output, dev_output, size * size * sizeof(int), cudaMemcpyDeviceToHost);
 	QueryPerformanceCounter(&end);
-
-	FILE* fileTime1;
-	fileTime1 = fopen("outMatrixGPU.txt", "a");
-	for (int j = 0; j < 29; j++)
+	
+	cudaError_t cudaStatus;
+	cudaStatus = cudaGetLastError();
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "error: %s\n", cudaGetErrorString(cudaStatus));
+	}
+	for (int i = 0; i < size; i++)
 	{
-		for (int k = 0; k < 29; k++)
-		{
-			fprintf(fileTime1, "%d\t", inputA[j * 29 + k]);
-		}
-		fprintf(fileTime1, "\n");
+		for (int j = 0; j < size; j++)
+			printf("%d\t", output[i * size + j]);
+		printf("\n");
 	}
 
-	//saveToFile(output, "outMatrixGPU.txt", size);
+	saveToFile(output, "outMatrixGPU.txt", size);
 	fprintf(fileTime, "%f\t", ((double)(end.QuadPart - start.QuadPart) / frequency.QuadPart) * 1000);
 
 	cudaFree(dev_inputA);
@@ -163,21 +162,11 @@ void GPUSM(int* inputA, int* inputB, int* output, FILE *fileTime)
 	QueryPerformanceFrequency(&frequency);
 	QueryPerformanceCounter(&start);
 	matrixMultiplicationGPUSharedMemeory << <dimGridSM, dimBlockSM >> >(dev_inputA, dev_inputB, output, size);
+	cudaDeviceSynchronize();
 	cudaMemcpy(output, dev_output, size * size * sizeof(int), cudaMemcpyDeviceToHost);
 	QueryPerformanceCounter(&end);
 
-	FILE* fileTime1;
-	fileTime1 = fopen("outMatrixGPUSH.txt", "a");
-	for (int j = 0; j < 29; j++)
-	{
-		for (int k = 0; k < 29; k++)
-		{
-			fprintf(fileTime1, "%d\t", inputA[j * 29 + k]);
-		}
-		fprintf(fileTime1, "\n");
-	}
-
-	//saveToFile(output, "outMatrixGPU.txt", size);
+	saveToFile(output, "outMatrixGPUSH.txt", size);
 	fprintf(fileTime, "%f\t", ((double)(end.QuadPart - start.QuadPart) / frequency.QuadPart) * 1000);
 
 	cudaFree(dev_inputA);
@@ -197,8 +186,7 @@ void init(int** inputA, int** inputB, int** output)
 int main() {
 	int *inputA, *inputB, *output;
 	FILE *fileTime = fopen("outTime.txt", "a");
-	
-	for (int i = 29; i < 30; i+= 16)
+	for (int i = 10; i < 12; i+= 16)
 	{
 		size = i;
 		init(&inputA, &inputB, &output);
