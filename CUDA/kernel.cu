@@ -5,9 +5,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <windows.h>
-#include "cublas.h"
-#include <math.h>
-#include "cuda_runtime.h"
+
 
 #define N 100
 #define RAND_MAX 100
@@ -41,7 +39,6 @@ __global__ void matrixMultiplicationGPUSharedMemeory(float *inputA, float *input
 {
 	__shared__ int Mds[TILE_WIDTH][TILE_WIDTH];
 	__shared__ int Nds[TILE_WIDTH][TILE_WIDTH];
-
 	int tIdX = threadIdx.x;
 	int tIdY = threadIdx.y;
 	int row = blockIdx.y * TILE_WIDTH + tIdY;
@@ -63,12 +60,10 @@ __global__ void matrixMultiplicationGPUSharedMemeory(float *inputA, float *input
 float* generateArray(int count)
 {
 	float *array;
-	array = (float*)malloc(count * sizeof(int));
 	srand(time(NULL));
+	array = (float*)malloc(count * sizeof(float));
 	for (int i = 0; i < count; i++)
-	{
 		(array)[i] = rand() % RAND_MAX;
-	}
 	return array;
 }
 
@@ -82,23 +77,21 @@ void saveToFile(float* array, char* name, int size)
 			fprintf(file, "%d\t", array[i * size + j]);
 		fprintf(file, "\n");
 	}
+	fclose(file);
 }
 
 
 int main() {
-	float *inputA, *inputB, *output, *dev_inputA, *dev_inputB, *dev_output, i, j, size = N * N * sizeof(int);
+	float *inputA, *inputB, *output, *dev_inputA, *dev_inputB, *dev_output, i, j, size = N * N * sizeof(float);
 	float time;
-	cudaEvent_t start, stop;
+	cudaEvent_t start, stop, startSM, stopSM;
 	LARGE_INTEGER frequency, startCPU, endCPU;
 	FILE *fileTime = fopen("outTime.txt", "a");
-	FILE *fileMatrixCPU = fopen("outMatrixCPU.txt", "a");
-	FILE *fileMatrixGPU = fopen("outMatrixGPU.txt", "a");
-	FILE *fileMatrixGPUSM = fopen("outMatrix.GPUSM.txt", "a");
 	
 	//prepare array
 	inputA = generateArray(N * N);
 	inputB = generateArray(N * N);
-	output = (float*)malloc(size);
+	output = (float*) malloc(size);
 	for (int i = 0; i < N * N; i++)
 		output[i] = 0;
 	
@@ -111,8 +104,7 @@ int main() {
 	
 	//save to file
 	saveToFile(output, "outMatrixCPU.txt", N);
-	
-	fprintf(fileTime, "matrixMultiplicationCPU time %f ms\n", ((double)(endCPU.QuadPart - startCPU.QuadPart) / frequency.QuadPart) * 1000);
+	fprintf(fileTime, "CPU time %f ms\n", ((double)(endCPU.QuadPart - startCPU.QuadPart) / frequency.QuadPart) * 1000);
 
 	//GPU
 	cudaEventCreate(&start);
@@ -129,16 +121,9 @@ int main() {
 	dim3 dimGrid(1, 1);
 	//dim3 dimGrid((int)ceil(N/dimBlock.x),(int)ceil(N/dimBlock.y));
 
-	int block = (int)ceil(N / dimBlock.x);
-	int thread = (int)ceil(N / dimBlock.y);
-
-	printf("Blok\n%d X\t%d Y\n\n", dimBlock.x, dimBlock.y);
-	printf("Grid\n%d Blok\t%d Watki\n", block, thread);
-
 	cudaEventRecord(start, 0);
-
 	//GPU calculations
-	matrixMultiplicationGPU << <dimGrid, dimBlock >> >(dev_inputA, dev_inputB, output, N);
+	matrixMultiplicationGPU <<<dimGrid, dimBlock >>>(dev_inputA, dev_inputB, output, N);
 	
 	cudaMemcpy(output, dev_output, size, cudaMemcpyDeviceToHost);
 	cudaEventRecord(stop, 0);
@@ -146,16 +131,16 @@ int main() {
 	cudaEventElapsedTime(&time, start, stop);
 
 	saveToFile(output, "outMatrixGPU.txt", N);
-	fprintf(fileTime, "matrixMultiplicationGPU time %g ms\n", time);
+	fprintf(fileTime, "GPU time %g ms\n", time);
 
 	cudaFree(dev_inputA);
 	cudaFree(dev_inputB);
 	cudaFree(dev_output);
 
 	//GPU + SM
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
-	cudaEventRecord(start, 0);
+	cudaEventCreate(&startSM);
+	cudaEventCreate(&stopSM);
+	cudaEventRecord(startSM, 0);
 	cudaMalloc((void **)&dev_inputA, size);
 	cudaMalloc((void **)&dev_inputB, size);
 	cudaMalloc((void **)&dev_output, size);
@@ -166,24 +151,18 @@ int main() {
 	dim3 dimGridSM(N / TILE_WIDTH, N / TILE_WIDTH);
 	dim3 dimBlockSM(TILE_WIDTH, TILE_WIDTH);
 
-	int blockSM = (int)ceil(N / dimBlockSM.x);
-	int threadSM = (int)ceil(N / dimBlockSM.y);
-
-	printf("Blok\n%d X\t%d Y\n\n", dimBlockSM.x, dimBlockSM.y);
-	printf("Grid\n%d Blok\t%d Watki\n", blockSM, threadSM);
-
-	cudaEventRecord(start, 0);
+	cudaEventRecord(startSM, 0);
 	
 	//GPU calculations
 	matrixMultiplicationGPUSharedMemeory <<<dimGridSM, dimBlockSM >>>(dev_inputA, dev_inputB, output, N);
 	
 	cudaMemcpy(output, dev_output, size, cudaMemcpyDeviceToHost);
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&time, start, stop);
+	cudaEventRecord(stopSM, 0);
+	cudaEventSynchronize(stopSM);
+	cudaEventElapsedTime(&time, startSM, stopSM);
 
 	saveToFile(output, "outMatrixGPUSM.txt", N);
-	fprintf(fileTime, "matrixMultiplication GPU SM time %g ms\n", time);
+	fprintf(fileTime, "GPU SM time %g ms\n", time);
 
 	cudaFree(dev_inputA);
 	cudaFree(dev_inputB);
