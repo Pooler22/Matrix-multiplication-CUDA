@@ -3,23 +3,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <windows.h>
-#include <math.h>
+#include<Windows.h>
 #include "cuda_runtime.h"
 
 
 #define RAND_MAX 100
-#define TILE_WIDTH 2
-
+#define TILE_WIDTH 8
 int size;
 
 void matrixMultiplicationCPU(int* inputA, int* inputB, int* output)
 {
-	int i, j, k;
+	int i, j, k, sum;
 	for (i = 0; i < size; i++)
 		for (j = 0; j < size; j++)
+		{
+			sum = 0;
 			for (k = 0; k < size; k++)
-				output[i*size + j] = output[i*size + j] + inputA[i*size + k] * inputB[j*size + j];
+				sum += inputA[i * size + k] * inputB[k * size + j];
+			output[i * size + j] = sum;
+		}
 }
 
 __global__ void matrixMultiplicationGPU(int *inputA, int *inputB, int *output, int size)
@@ -111,28 +113,14 @@ void GPU(int* inputA, int* inputB, int* output, FILE *fileTime)
 	cudaMemcpy(dev_inputA, inputA, size * size * sizeof(int), cudaMemcpyHostToDevice);
 	cudaMemcpy(dev_inputB, inputB, size * size * sizeof(int), cudaMemcpyHostToDevice);
 
-	dim3 dimBlock(size, size);
-	dim3 dimGrid(1, 1);
-	//dim3 dimGrid((int)ceil(N/dimBlock.x),(int)ceil(size/dimBlock.y));
+	dim3 dimGrid(size / TILE_WIDTH, size / TILE_WIDTH);
+	dim3 dimBlock(TILE_WIDTH, TILE_WIDTH);
 
 	QueryPerformanceFrequency(&frequency);
 	QueryPerformanceCounter(&start);
 	matrixMultiplicationGPU << <dimGrid, dimBlock >> >(dev_inputA, dev_inputB, dev_output, size);
-	cudaDeviceSynchronize();
 	cudaMemcpy(output, dev_output, size * size * sizeof(int), cudaMemcpyDeviceToHost);
 	QueryPerformanceCounter(&end);
-	
-	cudaError_t cudaStatus;
-	cudaStatus = cudaGetLastError();
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "error: %s\n", cudaGetErrorString(cudaStatus));
-	}
-	for (int i = 0; i < size; i++)
-	{
-		for (int j = 0; j < size; j++)
-			printf("%d\t", output[i * size + j]);
-		printf("\n");
-	}
 
 	saveToFile(output, "outMatrixGPU.txt", size);
 	fprintf(fileTime, "%f\t", ((double)(end.QuadPart - start.QuadPart) / frequency.QuadPart) * 1000);
@@ -141,7 +129,6 @@ void GPU(int* inputA, int* inputB, int* output, FILE *fileTime)
 	cudaFree(dev_inputB);
 	cudaFree(dev_output);
 }
-
 
 void GPUSM(int* inputA, int* inputB, int* output, FILE *fileTime)
 {
@@ -156,13 +143,12 @@ void GPUSM(int* inputA, int* inputB, int* output, FILE *fileTime)
 	cudaMemcpy(dev_inputA, inputA, size * size * sizeof(int), cudaMemcpyHostToDevice);
 	cudaMemcpy(dev_inputB, inputB, size * size * sizeof(int), cudaMemcpyHostToDevice);
 
+
 	dim3 dimGridSM(size / TILE_WIDTH, size / TILE_WIDTH);
 	dim3 dimBlockSM(TILE_WIDTH, TILE_WIDTH);
-
 	QueryPerformanceFrequency(&frequency);
 	QueryPerformanceCounter(&start);
-	matrixMultiplicationGPUSharedMemeory << <dimGridSM, dimBlockSM >> >(dev_inputA, dev_inputB, output, size);
-	cudaDeviceSynchronize();
+	matrixMultiplicationGPUSharedMemeory << <dimGridSM, dimBlockSM >> >(dev_inputA, dev_inputB, dev_output, size);
 	cudaMemcpy(output, dev_output, size * size * sizeof(int), cudaMemcpyDeviceToHost);
 	QueryPerformanceCounter(&end);
 
@@ -183,32 +169,32 @@ void init(int** inputA, int** inputB, int** output)
 		(*output)[i] = 0;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+
+	size  = (int)atoi(argv[1]);
 	int *inputA, *inputB, *output;
 	FILE *fileTime = fopen("outTime.txt", "a");
-	for (int i = 10; i < 12; i+= 16)
-	{
-		size = i;
-		init(&inputA, &inputB, &output);
-		
-		CPU(inputA, inputB, output, fileTime);
-
-		for (int k = 0; k < size * size; k++)
-			output[k] = 0;
-
-		GPU(inputA, inputB, output, fileTime);
-
-		for (int k = 0; k < size * size; k++)
-			output[k] = 0;
-
-		GPUSM(inputA, inputB, output, fileTime);
-
-		free(inputA);
-		free(inputB);
-		free(output);
-	}
+	fprintf(fileTime, "\n%d\t", size);
+	init(&inputA, &inputB, &output);
+	CPU(inputA, inputB, output, fileTime);
 	
+	for (int k = 0; k < size * size; k++)
+		output[k] = 0;
+	GPU(inputA, inputB, output, fileTime);
 
-	system("PAUSE");
+	for (int k = 0; k < size * size; k++)
+		output[k] = 0;
+	GPUSM(inputA, inputB, output, fileTime);
+	
+	cudaError_t cudaStatus;
+	cudaStatus = cudaGetLastError();
+	
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "error: %s\n", cudaGetErrorString(cudaStatus));
+	}
+
+	free(inputA);
+	free(inputB);
+	free(output);	
 	return 0;
 }
