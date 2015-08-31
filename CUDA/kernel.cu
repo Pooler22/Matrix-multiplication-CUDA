@@ -51,7 +51,6 @@ __global__ void matrixMultiplicationGPUSharedMemeory(int *inputA, int *inputB, i
 	
 	for (i = 0; i < size / TILE_WIDTH; i++)
 	{
-		
 		Mds[tIdY][tIdX] = inputA[row * size + (i * TILE_WIDTH + tIdX)];
 		Nds[tIdY][tIdX] = inputB[(i * TILE_WIDTH + tIdY) * size + column];
 		__syncthreads();
@@ -65,6 +64,7 @@ __global__ void matrixMultiplicationGPUSharedMemeory(int *inputA, int *inputB, i
 int* generateArray(int count)
 {
 	int *array;
+
 	srand(time(NULL));
 	array = (int*)malloc(count * sizeof(int));
 	for (int i = 0; i < count; i++)
@@ -76,6 +76,7 @@ void saveToFile(int* array, char* name, int size)
 {
 	int i, j;
 	FILE *file = fopen(name, "a");
+
 	for (i = 0; i < size; i++)
 	{
 		for (j = 0; j < size; j++)
@@ -143,13 +144,15 @@ void GPUSM(int* inputA, int* inputB, int* output, FILE *fileTime)
 	cudaMemcpy(dev_inputA, inputA, size * size * sizeof(int), cudaMemcpyHostToDevice);
 	cudaMemcpy(dev_inputB, inputB, size * size * sizeof(int), cudaMemcpyHostToDevice);
 
-
 	dim3 dimGridSM(size / TILE_WIDTH, size / TILE_WIDTH);
 	dim3 dimBlockSM(TILE_WIDTH, TILE_WIDTH);
+	
 	QueryPerformanceFrequency(&frequency);
 	QueryPerformanceCounter(&start);
+	
 	matrixMultiplicationGPUSharedMemeory << <dimGridSM, dimBlockSM >> >(dev_inputA, dev_inputB, dev_output, size);
 	cudaMemcpy(output, dev_output, size * size * sizeof(int), cudaMemcpyDeviceToHost);
+	
 	QueryPerformanceCounter(&end);
 
 	saveToFile(output, "outMatrixGPUSH.txt", size);
@@ -174,6 +177,8 @@ int main(int argc, char *argv[]) {
 	size  = (int)atoi(argv[1]);
 	int *inputA, *inputB, *output;
 	FILE *fileTime = fopen("outTime.txt", "a");
+	cudaError_t cudaStatus;
+	
 	fprintf(fileTime, "\n%d\t", size);
 	init(&inputA, &inputB, &output);
 	CPU(inputA, inputB, output, fileTime);
@@ -186,9 +191,7 @@ int main(int argc, char *argv[]) {
 		output[k] = 0;
 	GPUSM(inputA, inputB, output, fileTime);
 	
-	cudaError_t cudaStatus;
 	cudaStatus = cudaGetLastError();
-	
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "error: %s\n", cudaGetErrorString(cudaStatus));
 	}
